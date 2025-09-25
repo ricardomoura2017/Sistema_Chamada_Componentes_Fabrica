@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Painel de Expedição - Operador 3</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    body { background-color: black; color: white; font-family: Arial; margin: 0; padding: 0; }
+    .header { background-color: #111; padding: 2vh; text-align: center; font-size: clamp(30px, 5vw, 60px); font-weight: bold; border-bottom: 4px solid #333; }
+    .clock { font-size: clamp(20px, 3vw, 30px); color: #ccc; }
+    .container { padding: 2vh 2vw; }
+    .line-title { text-align: center; font-size: clamp(24px, 4vw, 50px); margin-bottom: 2vh; }
+    .request { background-color: #28a745; padding: 3vh 2vw; margin-bottom: 2vh; border-radius: 20px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; font-size: clamp(24px, 4vw, 48px); font-weight: bold; }
+    .request div { flex: 1 1 40%; }
+    .yellow { background-color: #ffc107; animation: blinkYellow 1s infinite; }
+    .red { background-color: #dc3545; animation: blinkRed 1s infinite; }
+    @keyframes blinkYellow { 0%, 100% { background-color: #ffc107; } 50% { background-color: white; color: black; } }
+    @keyframes blinkRed { 0%, 100% { background-color: #dc3545; } 50% { background-color: white; color: black; } }
+    button.atender-btn { background-color: #007bff; border: none; color: white; font-size: clamp(20px, 3vw, 36px); padding: 1vh 2vw; border-radius: 15px; cursor: pointer; margin-left: 2vw; font-weight: bold; }
+    .footer { position: fixed; bottom: 10px; right: 20px; font-size: clamp(14px, 2vw, 20px); color: #888; }
+    .btn-clear { background-color: #dc3545; color: white; }
+    .btn-audio { background-color: #198754; color: white; }
+    table { width: 100%; font-size: clamp(16px, 2.5vw, 24px); }
+    th, td { padding: 1vh; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header">Painel de Expedição - Operador 3<div class="clock" id="clock"></div></div>
+  <div class="container">
+    <div class="line-title">Requisições Pendentes</div>
+    <div id="pendingArea"></div>
+    <hr style="margin: 40px 0;">
+    <div class="line-title">Histórico de Requisições</div>
+    <div>
+      <select id="lineSelect"><option value="">Selecione uma linha</option></select>
+      <button class="btn-clear" onclick="clearHistory()">Limpar Histórico</button>
+      <button class="btn-audio" onclick="toggleAudio()" id="audioButton">Ativar Áudio 🔊</button>
+    </div>
+    <div id="historyArea">
+      <table border="1">
+        <thead><tr><th>Data e Hora</th><th>Tempo de Atendimento</th></tr></thead>
+        <tbody id="historyTable"></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="footer">By Ricardo Moura</div>
+
+  <audio id="alertNew" src="audio/alert-new.mp3"></audio>
+  <audio id="alertWarning" src="audio/alert-warning.mp3"></audio>
+  <audio id="alertTimeout" src="audio/alert-timeout.mp3"></audio>
+
+<script>
+const socket = io({ transports: ['websocket'] });
+const linhasResponsaveis = ["LINHA5", "LINHA6"];
+let productionLines = [];
+let pendingRequests = [];
+let selectedLine = '';
+let audioEnabled = true;
+
+socket.on('initialData', ({ productionLines: lines, pendingRequests: pending }) => {
+  productionLines = lines;
+  pendingRequests = pending.filter(r => linhasResponsaveis.includes(r.name));
+  updateLineSelect();
+  renderPendingRequests();
+});
+
+socket.on('componentRequested', (request) => {
+  if (linhasResponsaveis.includes(request.name)) {
+    pendingRequests.push(request);
+    renderPendingRequests();
+    if (audioEnabled) document.getElementById('alertNew').play();
+  }
+});
+
+socket.on('requestAttended', ({ timestamp }) => {
+  pendingRequests = pendingRequests.filter(r => r.timestamp !== timestamp);
+  renderPendingRequests();
+  updateHistory();
+});
+
+function updateLineSelect() {
+  const select = document.getElementById('lineSelect');
+  select.innerHTML = '<option value="">Selecione uma linha</option>' +
+    productionLines
+      .filter(l => linhasResponsaveis.includes(l.name))
+      .map(l => `<option value="${l.name}">${l.name}</option>`).join('');
+}
+
+document.getElementById('lineSelect').addEventListener('change', (e) => {
+  selectedLine = e.target.value;
+  updateHistory();
+});
+
+function renderPendingRequests() {
+  const area = document.getElementById('pendingArea');
+  if (!pendingRequests.length) {
+    area.innerHTML = '<p style="text-align:center;color:gray;">Nenhuma requisição pendente</p>';
+    return;
+  }
+
+  area.innerHTML = pendingRequests.map(r => {
+    const elapsedMin = Math.floor((Date.now() - r.timestamp) / 60000);
+    let cssClass = 'request';
+    if (elapsedMin > 20) cssClass += ' red';
+    else if (elapsedMin > 10) cssClass += ' yellow';
+
+    return `
+      <div class="${cssClass}">
+        <div><strong>Linha:</strong> ${r.name}</div>
+        <div><strong>Embalagem:</strong> ${r.embalagem || 'N/A'}</div>
+        <div><strong>Solicitado:</strong> ${r.date}</div>
+        <button class="atender-btn" onclick="atenderRequisicao('${r.name}', ${r.timestamp})">ATENDER</button>
+      </div>
+    `;
+  }).join('');
+}
+
+function atenderRequisicao(lineName, timestamp) {
+  socket.emit('attendRequest', { lineName, timestamp });
+}
+
+function updateHistory() {
+  if (!selectedLine) return;
+  fetch('/get-history?lineName=' + encodeURIComponent(selectedLine))
+    .then(res => res.json())
+    .then(data => {
+      const table = document.getElementById('historyTable');
+      table.innerHTML = data.length
+        ? data.map(h => `<tr><td>${h.requestDate}</td><td>${h.timeTaken}</td></tr>`).join('')
+        : '<tr><td colspan="2">Sem histórico</td></tr>';
+    });
+}
+
+function clearHistory() {
+  if (!selectedLine) return alert("Selecione uma linha!");
+  if (!confirm("Deseja limpar o histórico da linha " + selectedLine + "?")) return;
+
+  fetch('/clear-history', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ lineName: selectedLine })
+  })
+    .then(res => res.json())
+    .then(data => {
+      alert(data.message);
+      updateHistory();
+    });
+}
+
+function toggleAudio() {
+  audioEnabled = !audioEnabled;
+  const btn = document.getElementById('audioButton');
+  btn.textContent = audioEnabled ? 'Desativar Áudio 🔇' : 'Ativar Áudio 🔊';
+}
+
+// Atualizar relógio
+function updateClock() {
+  const now = new Date();
+  document.getElementById('clock').textContent = now.toLocaleTimeString('pt-BR');
+}
+setInterval(updateClock, 1000);
+updateClock();
+</script>
+</body>
+</html>

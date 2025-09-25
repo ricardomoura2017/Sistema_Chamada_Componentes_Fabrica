@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Painel de Produ&ccedil;&atilde;o</title>
+<script src="/socket.io/socket.io.js"></script>
+<style>
+    body { background-color: #222; color: white; font-family: Arial, sans-serif; padding: 2vh 2vw; }
+    .container { max-width: 1600px; margin: 0 auto; }
+    h1 { font-size: clamp(32px, 5vw, 48px); text-align: center; margin-bottom: 2vh; color: #00ffff; }
+    .section { background-color: #333; padding: 2vh 2vw; border-radius: 15px; box-shadow: 0 6px 12px rgba(0,0,0,0.7); margin-bottom: 2vh; }
+    h2, h3 { font-size: clamp(24px, 4vw, 36px); margin-bottom: 1vh; }
+    select, button { padding: 1vh 2vw; border: 1px solid #ccc; border-radius: 8px; font-size: clamp(18px, 3vw, 24px); width: 100%; }
+    button { background-color: #007bff; color: white; cursor: pointer; }
+    button:hover { background-color: #0056b3; }
+    ul { list-style: none; padding: 0; max-height: 60vh; overflow-y: auto; }
+    li.pending { padding: 2vh 2vw; border-radius: 12px; margin-bottom: 1.5vh; font-size: clamp(20px, 4vw, 32px); font-weight: bold; display: flex; justify-content: space-between; align-items: center; color: black; }
+    li.pending.green { background-color: #28a745; animation: blinkGreen 1s infinite; }
+    li.pending.yellow { background-color: #ffc107; animation: blinkYellow 1s infinite; }
+    li.pending.red { background-color: #dc3545; animation: blinkRed 1s infinite; }
+    @keyframes blinkGreen { 0%, 100% { background-color: #28a745; } 50% { background-color: white; } }
+    @keyframes blinkYellow { 0%, 100% { background-color: #ffc107; } 50% { background-color: white; } }
+    @keyframes blinkRed { 0%, 100% { background-color: #dc3545; } 50% { background-color: white; } }
+    table { width: 100%; border-collapse: collapse; background-color: #444; color: white; margin-top: 1vh; font-size: clamp(16px, 2.5vw, 20px); }
+    th, td { border: 1px solid #666; padding: 1vh; text-align: center; }
+    th { background-color: #555; }
+    .hidden { display: none; }
+    .footer { position: fixed; bottom: 10px; right: 20px; font-size: clamp(14px, 2vw, 18px); color: #ccc; opacity: 0.7; }
+</style>
+</head>
+<body>
+<div class="container">
+    <h1>Painel de Produ&ccedil;&atilde;o</h1>
+    <div class="section">
+        <h2>Selecione sua linha</h2>
+        <select id="lineSelect"></select>
+    </div>
+    <div id="linePanel" class="section hidden">
+        <h2 id="lineName"></h2>
+        
+<div class="section" id="embalagemSection" style="margin-top: 20px;">
+  <h3>Selecione a embalagem</h3>
+  <select id="embalagemSelect" disabled>
+    <option value="">Escolha a embalagem</option>
+    <option value="Embalagem Tipo A">Embalagem Tipo A</option>
+    <option value="Embalagem Tipo B">Embalagem Tipo B</option>
+    <option value="Embalagem Tipo C">Embalagem Tipo C</option>
+    <option value="Embalagem Tipo D">Embalagem Tipo D</option>
+  </select>
+</div>
+<br>
+<button id="requestButton">Solicitar Rack</button>
+
+        <h3>Requisi&ccedil;&otilde;es Pendentes</h3>
+        <ul id="pendingRequests"></ul>
+        <h3>Hist&oacute;rico de Requisi&ccedil;&otilde;es</h3>
+        <table>
+            <thead><tr><th>Data</th><th>Tempo Atendido</th></tr></thead>
+            <tbody id="historyTable"></tbody>
+        </table>
+    </div>
+</div>
+<div class="footer">By Ricardo Moura</div>
+
+<script>
+const socket = io({ transports: ['websocket'] });
+let selectedLineId = null;
+let selectedLineName = null;
+let pendingRequests = [];
+let embalagensPorLinha = {};
+
+socket.on('initialData', ({ productionLines, pendingRequests: serverPending, embalagensPorLinha: epl }) => {
+    embalagensPorLinha = epl || {};
+    const lineSelect = document.getElementById('lineSelect');
+    lineSelect.innerHTML = '<option value="">Selecione uma linha</option>' +
+        productionLines.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
+    pendingRequests = [];
+    updatePendingRequests([]);
+});
+
+socket.on('componentRequested', (request) => {
+    if (request.id === selectedLineId) {
+        pendingRequests.push(request);
+        updatePendingRequests(pendingRequests);
+    }
+});
+
+socket.on('requestAttended', ({ timestamp }) => {
+    pendingRequests = pendingRequests.filter(r => r.timestamp !== timestamp);
+    updatePendingRequests(pendingRequests);
+    updateHistory();
+});
+
+document.getElementById('lineSelect').addEventListener('change', (e) => {
+    selectedLineId = e.target.value;
+    selectedLineName = e.target.options[e.target.selectedIndex]?.text;
+
+    const embalagemSelect = document.getElementById('embalagemSelect');
+    embalagemSelect.innerHTML = '<option value="">Escolha a embalagem</option>';
+    if (embalagensPorLinha[selectedLineId]) {
+      embalagensPorLinha[selectedLineId].forEach(emb => {
+        embalagemSelect.innerHTML += `<option value="${emb}">${emb}</option>`;
+      });
+      embalagemSelect.disabled = false;
+    } else {
+      embalagemSelect.disabled = true;
+    }
+
+    if (selectedLineId) {
+        document.getElementById('linePanel').classList.remove('hidden');
+        document.getElementById('lineName').textContent = selectedLineName;
+        fetch('/get-pending-requests')
+            .then(res => res.json())
+            .then(requests => {
+                pendingRequests = requests.filter(r => r.id === selectedLineId);
+                updatePendingRequests(pendingRequests);
+            });
+        updateHistory();
+    } else {
+        document.getElementById('linePanel').classList.add('hidden');
+    }
+});
+
+document.getElementById('requestButton').addEventListener('click', () => {
+  const embalagem = document.getElementById('embalagemSelect').value;
+  if (!embalagem) return alert("Selecione a embalagem!");
+  if (selectedLineId) {
+    fetch('/request-component', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({ lineId: selectedLineId, embalagem })
+    })
+    .then(res => res.json())
+    .then(data => alert(data.message))
+    .catch(err => alert('Erro ao enviar requisição: ' + err.message));
+  }
+});
+
+function updatePendingRequests(requests) {
+    const pendingList = document.getElementById('pendingRequests');
+    pendingList.innerHTML = requests.length 
+        ? requests.map(r => {
+            const colorClass = getColorClass(r.timestamp);
+            return `<li class="pending ${colorClass}">Solicitado em: ${r.date}</li>`;
+        }).join('')
+        : '<li style="color:white;">Nenhuma requisição pendente</li>';
+}
+
+setInterval(() => {
+    if (pendingRequests.length) {
+        updatePendingRequests(pendingRequests);
+    }
+}, 60000);
+
+function getColorClass(timestamp) {
+    const elapsed = getElapsedMinutes(timestamp);
+    if (elapsed > 20) return 'red';
+    if (elapsed > 10) return 'yellow';
+    return 'green';
+}
+
+function getElapsedMinutes(timestamp) {
+    const now = Date.now();
+    const diff = now - timestamp;
+    return Math.floor(diff / 60000);
+}
+
+function updateHistory() {
+    if (!selectedLineName) return;
+    fetch('/get-history?lineName=' + encodeURIComponent(selectedLineName))
+        .then(res => res.json())
+        .then(history => {
+            const table = document.getElementById('historyTable');
+            table.innerHTML = history.length 
+                ? history.map(h => `<tr><td>${h.requestDate}</td><td>${h.timeTaken}</td></tr>`).join('')
+                : '<tr><td colspan="2">Sem Histórico</td></tr>';
+        });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+ainel	URL no navegador	Exibe
+Painel geral (TV)	http://localhost:3000/expedition-panel	Todas as linhas
+Painel do Operador 1	http://localhost:3000/painel-operador1	Linhas do operador1
+Painel do Operador 2	http://localhost:3000/painel-operador2	Linhas do operador2
+Painel do Operador 3	http://localhost:3000/painel-operador3	Linhas do operador3
+Painel do Operador 4	http://localhost:3000/painel-operador4	Linhas do operador4
