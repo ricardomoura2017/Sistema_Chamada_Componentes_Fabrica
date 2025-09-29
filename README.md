@@ -1,4 +1,4 @@
-<h1>Sistema para chamdas de componentes e embalagens para linhas de produção.</h1>
+<h1>Sistema para chamadas de componentes e embalagens para linhas de produção.</h1>
 
 <p>Um sistema 100% web, utilizando Nodejs, Express e Socket.io, que permite o controle em tempo real das chamadas de componentes nas linhas de produção e na expedição.
 
